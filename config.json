@@ -1,0 +1,35 @@
+{
+  "region":"us-east-1",
+  "source-ami":"ami-9eaa1cf6",
+  "ami-name":"Opsee Bastion {{timestamp}}",
+  "ami-description":"Opsee's Bastion Software",
+  "instance-type":"t2.micro",
+  "ssh-username":"ubuntu",
+  "staging":"/tmp/staging",
+  "ami-tags":[
+    ["sha", "{{git-sha}}"],
+    ["release","build"]
+  ],
+  "prepare": [
+    {
+      "type" : "shell",
+      "instructions": [
+        "sudo apt-get update",
+        "sudo apt-get upgrade -y",
+        "sudo apt-get install -y ntp"
+      ]
+    },
+    {
+      "type": "systemd",
+      "unit_file": "hello.service"
+    },
+    {
+      "type": "chef-solo",
+      "cookbook_paths": ["cookbooks"],
+      "run_list": ["runit", "bastion"]
+    }
+  ],
+  "reboot-before-build":true,
+  "public":false,
+  "copy-to":"all"
+}
