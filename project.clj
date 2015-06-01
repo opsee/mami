@@ -5,6 +5,12 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :main ^:skip-aot mami.core
   :profiles {:uberjar {:aot :all}}
+  :plugins [[s3-wagon-private "1.1.2"]
+            [rplevy/lein-deploy-app "0.2.1"]]
+  :deploy-app {:s3-bucket "s3p://opsee-releases/clj/" :creds :env}
+  :repositories [["snapshots" {:url "s3p://opsee-maven-snapshots/snapshot"
+                               :username :env
+                               :passphrase :env}]]
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [amazonica "0.3.21"]
                  [cheshire "5.4.0"]
