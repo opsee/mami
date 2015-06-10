@@ -52,7 +52,6 @@
 (defn run-instructions [instructions]
   (fn [session]
     (let [result (ssh session {:in (str/join ";" instructions)})]
-      ;(pprint (str/replace (:out result) #"[\x1B]" "\\x1B"))
       (println (str/replace (:out result) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
       (when-not (= 0 (:exit result))
         (throw (Exception. "ssh instructions failed."))))))
