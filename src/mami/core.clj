@@ -1,21 +1,21 @@
 (ns mami.core
   (:gen-class)
   (:require [amazonica.aws.ec2 :refer :all]
+            [amazonica.aws.cloudformation :as cf]
             [clojure.java.shell :refer [sh]]
             [cheshire.core :refer :all]
             [clostache.parser :refer :all]
             [clj-time.core :as t]
             [mami.identifiers :as identifiers]
             [clj-time.format :as f]
+            [clojure.tools.cli :as cli]
             [clj-ssh.ssh :refer :all]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [clojure.pprint :refer [pprint]]
             [clojure.string :refer [trim-newline]]
             [mami.regions :refer :all])
-  (:import (java.io File)
-           (java.net ConnectException)
-           (com.jcraft.jsch JSchException)))
+  (:import (java.io File)))
 
 (defn git-rev []
   (trim-newline (:out (sh "git" "rev-parse" "HEAD"))))
@@ -29,12 +29,12 @@
     (:public-ip-address instance)))
 
 (defn wait-for-state [creds state instance-id]
-  (loop [{[instance-status] :instance-statuses} (describe-instance-status creds {:instance-ids [instance-id]})]
-    (log/info "instance state" (get-in instance-status [:instance-state :name]))
-    (if-not (= state (get-in instance-status [:instance-state :name]))
+  (loop [{[{[{status :state}] :instances}] :reservations} (describe-instances creds {:instance-ids [instance-id]})]
+    (log/info "instance status" status)
+    (if-not (= state (:name status))
       (do
         (Thread/sleep 1000)
-        (recur (describe-instance-status creds {:instance-ids [instance-id]}))))))
+        (recur (describe-instances creds {:instance-ids [instance-id]}))))))
 
 (defn do-with-ssh [keypair username public-ip & fns]
   (let [agent (ssh-agent {})]
@@ -75,7 +75,7 @@
 
 ;;;; these get invoked by the corresponding "type" in the prepare steps
 
-(defn shell [keypair username public-ip staging shell-config]
+(defn shell [keypair username public-ip _ shell-config]
   (let [instructions (:instructions shell-config)]
     (do-with-ssh keypair username public-ip
                  (run-instructions instructions))))
@@ -89,6 +89,15 @@
                                     (str "sudo systemctl enable /etc/systemd/system/" unit-name)
                                     (str "sudo systemctl start " unit-name)
                                     (str "sudo systemctl status " unit-name)]))))
+
+(defn waitfor [keypair username public-ip _ waitfor-config]
+  (let [test-script (:test waitfor-config)]
+    (do-with-ssh keypair username public-ip
+      (fn [session]
+        (loop []
+          (let [output (ssh session {:in (str "test " test-script)})]
+            (when-not (= 0 (:exit output))
+              (recur))))))))
 
 (defn chef-solo [keypair username public-ip staging chef-config]
   (let [cookbook_paths (:cookbook_paths chef-config)
@@ -146,14 +155,17 @@
     (reboot-instances creds {:instance-ids [instance-id]})
     (wait-for-state creds "running" instance-id)))
 
+(defn tag-image [creds image-id config]
+  (create-tags creds {:resources [image-id]
+                      :tags (:ami-tags config)}))
+
 (defn make-ebs-image [creds instance-details config]
   (let [{image-id :image-id} (create-image creds {:instance-id (:instance-id instance-details)
                                                   :name (:ami-name config)
                                                   :description (:ami-description config)
                                                   :no-reboot true})]
     (log/info "create image id" image-id)
-    (create-tags creds {:resources [image-id]
-                        :tags (:ami-tags config)})
+    (tag-image creds image-id config)
     image-id))
 
 (defn copy-to [from-region image-id config]
@@ -172,6 +184,7 @@
                                                                 :source-image-id image-id
                                                                 :source-region from-region})]
                    (log/info "copied to" to-region "with id" dst-image-id)
+                   (tag-image ep dst-image-id config)
                    [to-region dst-image-id]))))))
 
 (defn run-build [config]
@@ -202,14 +215,80 @@
       (System/exit 1)
       (log/info "Completed successfully."))))
 
+(defn parse-tags [arg]
+  (map
+    (fn [tagsec]
+      (let [[name vals] (str/split tagsec #"\s*=\s*")]
+        {:name (str "tag:" name)
+         :values (when vals (str/split vals #"\s*,\s*"))}))
+    (str/split arg #"\s*;\s*")))
+
+(def common-options
+  [["-g" "--regions REGIONS" "a comma separated list of regions to do the upload (defaults to all)"
+    :default "all"
+    :parse-fn #(str/split % #",\s*")]
+   ["-f" "--filter TAGS" "a semicolon separated list of tag filters name=value1,value2"
+    :default ""
+    :parse-fn parse-tags]])
+
+(defn get-regions [region-option]
+  (if (= "all" region-option)
+    all-regions
+    (map #(keyword %) region-option)))
+
+(def tag-options
+  (concat common-options
+    []))
+
+(defn run-tag [args config]
+  (let [{:keys [options arguments errors summary]} (cli/parse-opts args tag-options)]
+    ))
+
+(def latest-options
+  (concat common-options
+     [["-o" "--owner OWNER" "the owning acct id for the AMIs" :default "933693344490"]]))
+
+(defn run-latest [args config]
+  (let [{:keys [options arguments errors summary]} (cli/parse-opts args latest-options)
+        filters (flatten [(if-let [sha (:sha options)]
+                            {:name "tag:sha" :values [sha]}
+                            [])
+                          (if-let [release (:release options)]
+                            {:name "tag:release" :values [release]}
+                            [])])]
+    (doseq [region (get-regions (:regions options))
+            :let [creds {:endpoint (name region)}
+                  {images :images} (describe-images creds :owners [(:owner options)] :filters filters)
+                  image (first
+                          (sort-by :name #(compare %2 %1) images))]]
+      (pprint {region image}))))
+
+(def clear-options
+  (concat common-options
+    [[]]))
+
+(defn run-clear-amis [args config]
+  )
+
+(defn run-clear-stacks [args config]
+  (let [{:keys [options arguments errors summary]} (cli/parse-opts args clear-options)]
+    (doseq [region (get-regions (:regions options))
+            :let [creds {:endpoint (name region)}]]
+      (doseq [stack (:stacks (cf/describe-stacks creds))]
+        (cf/delete-stack creds stack)))))
+
 (defn -main [& args]
   (let [action (first args)
+        options (drop 1 (drop-last 1 args))
         config-file (last args)
         config-template (slurp config-file)
         env {:git-rev (git-rev)
              :timestamp (timestamp)
              :clean-timestamp (str/replace (timestamp) #":" ".")}
-        _ (log/info env)
         config (parse-string (render config-template env) true)]
     (case action
-      "build" (run-build config))))
+      "build" (run-build config)
+      "tag" (run-tag options config)
+      "latest" (run-latest options config)
+      "clear-amis" (run-clear-amis options config)
+      "clear-stacks" (run-clear-stacks options config))))
