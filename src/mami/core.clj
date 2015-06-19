@@ -96,6 +96,7 @@
       (fn [session]
         (loop []
           (let [output (ssh session {:in (str "test " test-script)})]
+            (println (str/replace (:out output) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
             (when-not (= 0 (:exit output))
               (recur))))))))
 
