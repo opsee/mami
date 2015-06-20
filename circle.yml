@@ -3,7 +3,7 @@ machine:
     version: oraclejdk8
 notify:
   webhooks:
-    - url: https://hooks.slack.com/services/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
+    - url: https://hooks.slack.com/services/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
 deployment:
   releases:
     branch: master
