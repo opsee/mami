@@ -15,7 +15,9 @@
             [clojure.pprint :refer [pprint]]
             [clojure.string :refer [trim-newline]]
             [mami.regions :refer :all])
-  (:import (java.io File)))
+  (:import (java.io File)
+           (java.nio.file Files Path FileSystems)
+           (java.nio.file.attribute PosixFilePermission)))
 
 (defn git-rev []
   (trim-newline (:out (sh "git" "rev-parse" "HEAD"))))
@@ -73,6 +75,16 @@
   (delete-key-pair creds {:key-name (:key-name (:key-pair instance-details))})
   (delete-security-group creds {:group-id (:sg-id instance-details)}))
 
+(defn print-debug [creds keypair username public-ip]
+  (let [key (:key-material keypair)
+        filename (str public-ip ".pem")]
+    (spit filename key)
+    (Files/setPosixFilePermissions
+      (.getPath (FileSystems/getDefault) "." (into-array String [filename]))
+      #{PosixFilePermission/OWNER_READ PosixFilePermission/OWNER_WRITE})
+    (log/info "Build failed, instance preserved for debug. To login run:")
+    (log/info (str "ssh -i " filename " " username "@" public-ip))))
+
 ;;;; these get invoked by the corresponding "type" in the prepare steps
 
 (defn shell [keypair username public-ip _ shell-config]
@@ -94,11 +106,14 @@
   (let [test-script (:test waitfor-config)]
     (do-with-ssh keypair username public-ip
       (fn [session]
-        (loop []
-          (let [output (ssh session {:in (str "test " test-script)})]
-            (println (str/replace (:out output) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
-            (when-not (= 0 (:exit output))
-              (recur))))))))
+        (loop [count 0]
+          (if (> count 30)
+            (throw (Exception. "Waitfor timed out."))
+            (let [output (ssh session {:in (str "test " test-script)})]
+              (println (str/replace (:out output) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
+              (when-not (= 0 (:exit output))
+                (Thread/sleep 2000)
+                (recur (inc count))))))))))
 
 (defn chef-solo [keypair username public-ip staging chef-config]
   (let [cookbook_paths (:cookbook_paths chef-config)
@@ -191,30 +206,35 @@
 (defn run-build [config]
   (let [error (atom false)
         creds {:endpoint (:region config)}
-        instance-details (launch-instance creds config)]
+        instance-details (launch-instance creds config)
+        keypair (:key-pair instance-details)
+        public-ip (:public-ip instance-details)
+        preparation-steps (:prepare config)
+        username (:ssh-username config)
+        staging-dir (:staging config)]
     (try
-      (let [preparation-steps (:prepare config)
-            username (:ssh-username config)
-            staging-dir (:staging config)
-            keypair (:key-pair instance-details)
-            public-ip (:public-ip instance-details)]
-        (create-staging-dir keypair username public-ip staging-dir)
-        (doseq [step preparation-steps
-                :let [type (:type step)]]
-          ((eval (symbol "mami.core" type)) keypair username public-ip staging-dir step))
-        (cleanup-prepare keypair username public-ip staging-dir)
-        (if (:reboot-before-build config)
-          (reboot-and-wait creds instance-details))
-        (let [image-id  (make-ebs-image creds instance-details config)
-              image-ids (copy-to (:region config) image-id config)]
-          (doseq [[] (seq image-ids)])))
+      (create-staging-dir keypair username public-ip staging-dir)
+      (doseq [step preparation-steps
+              :let [type (:type step)]]
+        ((eval (symbol "mami.core" type)) keypair username public-ip staging-dir step))
+      (cleanup-prepare keypair username public-ip staging-dir)
+      (if (:reboot-before-build config)
+        (reboot-and-wait creds instance-details))
+      (let [image-id  (make-ebs-image creds instance-details config)
+            image-ids (copy-to (:region config) image-id config)]
+        (doseq [[] (seq image-ids)]))
       (catch Exception ex
         (log/error ex "Got exception during build")
-        (reset! error true))
-      (finally (if (:cleanup config) (cleanup creds instance-details))))
+        (reset! error true)))
     (if @error
-      (System/exit 1)
-      (log/info "Completed successfully."))))
+      (do
+        (if (:cleanup-on-error config)
+          (cleanup creds instance-details)
+          (print-debug creds keypair username public-ip))
+        (System/exit 1))
+      (do
+        (cleanup creds instance-details)
+        (System/exit 0)))))
 
 (defn parse-tags [arg]
   (map
