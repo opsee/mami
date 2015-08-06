@@ -157,6 +157,10 @@
                                                            :instance-type (:instance-type config)
                                                            :key-name keypair-name})
           public-ip (do
+                      ;; Race condition between run-instances and describe-instances in wait-for-state
+                      ;; So just sleep for a second before we try to wait-for-state. Should cut down
+                      ;; on the number of times that we have to clean up after an exception.
+                      (Thread/sleep 1000)
                       (wait-for-state creds "running" instance-id)
                       (get-public-ip creds instance-id))]
       (log/info "instance" instance-id "successfully launched reachable at" public-ip)
@@ -171,9 +175,10 @@
     (reboot-instances creds {:instance-ids [instance-id]})
     (wait-for-state creds "running" instance-id)))
 
-(defn tag-image [creds image-id config]
-  (create-tags creds {:resources [image-id]
-                      :tags (:ami-tags config)}))
+(defn tag-image [creds image-id tags]
+    (log/info "tagging image" image-id "with" tags)
+    (create-tags creds {:resources [image-id]
+                        :tags      tags}))
 
 (defn make-ebs-image [creds instance-details config]
   (let [{image-id :image-id} (create-image creds {:instance-id (:instance-id instance-details)
@@ -181,15 +186,10 @@
                                                   :description (:ami-description config)
                                                   :no-reboot true})]
     (log/info "create image id" image-id)
-    (tag-image creds image-id config)
     image-id))
 
 (defn copy-to [from-region image-id config]
-  (let [copying-to (:copy-to config)
-        to-regions (cond
-                     (seq? copying-to) copying-to
-                     (= "all" copying-to) (all-regions-except from-region)
-                     :else [copying-to])]
+  (let [to-regions (:copy-to config)]
     (apply hash-map
            (flatten
              (for [to-region to-regions
@@ -198,43 +198,13 @@
                  (let [{dst-image-id :image-id} (copy-image ep {:name (:ami-name config)
                                                                 :description (:ami-description config)
                                                                 :source-image-id image-id
-                                                                :source-region from-region})]
+                                                                :source-region from-region})
+                       tags (concat (:ami-tags config)
+                              [["sha" (git-rev)]
+                               ["release" (:release config)]])]
                    (log/info "copied to" to-region "with id" dst-image-id)
-                   (tag-image ep dst-image-id config)
+                   (tag-image ep dst-image-id tags)
                    [to-region dst-image-id]))))))
-
-(defn run-build [config]
-  (let [error (atom false)
-        creds {:endpoint (:region config)}
-        instance-details (launch-instance creds config)
-        keypair (:key-pair instance-details)
-        public-ip (:public-ip instance-details)
-        preparation-steps (:prepare config)
-        username (:ssh-username config)
-        staging-dir (:staging config)]
-    (try
-      (create-staging-dir keypair username public-ip staging-dir)
-      (doseq [step preparation-steps
-              :let [type (:type step)]]
-        ((eval (symbol "mami.core" type)) keypair username public-ip staging-dir step))
-      (cleanup-prepare keypair username public-ip staging-dir)
-      (if (:reboot-before-build config)
-        (reboot-and-wait creds instance-details))
-      (let [image-id  (make-ebs-image creds instance-details config)
-            image-ids (copy-to (:region config) image-id config)]
-        (doseq [[] (seq image-ids)]))
-      (catch Exception ex
-        (log/error ex "Got exception during build")
-        (reset! error true)))
-    (if @error
-      (do
-        (if (:cleanup-on-error config)
-          (cleanup creds instance-details)
-          (print-debug creds keypair username public-ip))
-        (System/exit 1))
-      (do
-        (cleanup creds instance-details)
-        (System/exit 0)))))
 
 (defn parse-tags [arg]
   (map
@@ -250,7 +220,52 @@
     :parse-fn #(str/split % #",\s*")]
    ["-f" "--filter TAGS" "a semicolon separated list of tag filters name=value1,value2"
     :default ""
-    :parse-fn parse-tags]])
+    :parse-fn parse-tags]
+   ["-r" "--release TAG" "Tag the release (build [default], beta, stable)"
+    :default "build"]])
+
+(def build-options
+  (concat common-options
+    [[nil "--no-cleanup" "Disable cleanup (default false)"
+      :default false]]))
+
+(defn run-build [args config]
+  (let [{:keys [options _ _ _]} (cli/parse-opts args build-options)
+        config (merge config options)
+        error (atom false)
+        creds {:endpoint (:build-region config)}
+        instance-details (launch-instance creds config)
+        instance-id (:instance-id instance-details)
+        keypair (:key-pair instance-details)
+        public-ip (:public-ip instance-details)
+        preparation-steps (:prepare config)
+        username (:ssh-username config)
+        staging-dir (:staging config)]
+    (try
+      (create-staging-dir keypair username public-ip staging-dir)
+      (doseq [step preparation-steps
+              :let [type (:type step)]]
+        ((eval (symbol "mami.core" type)) keypair username public-ip staging-dir step))
+      (cleanup-prepare keypair username public-ip staging-dir)
+      (if (:reboot-before-build config)
+        (reboot-and-wait creds instance-details))
+      (stop-instances creds {:instance-ids [instance-id]})
+      (wait-for-state creds "stopped" instance-id)
+      (let [image-id  (make-ebs-image creds instance-details config)
+            image-ids (copy-to (:build-region config) image-id config)]
+        (doseq [[] (seq image-ids)]))
+      (catch Exception ex
+        (log/error ex "Got exception during build")
+        (reset! error true)))
+    (if (or @error (:no-cleanup options))
+      (do
+        (if (:cleanup-on-error config)
+          (cleanup creds instance-details)
+          (print-debug creds keypair username public-ip))
+        (System/exit 1))
+      (do
+        (cleanup creds instance-details)
+        (System/exit 0)))))
 
 (defn get-regions [region-option]
   (if (= "all" region-option)
@@ -259,11 +274,10 @@
 
 (def tag-options
   (concat common-options
-    []))
+    [["-s" "--sha" "sha tag of the image to set the release tag (default: current git revhash"
+      :default nil]]))
 
-(defn run-tag [args config]
-  (let [{:keys [options arguments errors summary]} (cli/parse-opts args tag-options)]
-    ))
+(defn run-tag [args config])
 
 (def latest-options
   (concat common-options
@@ -298,6 +312,16 @@
       (doseq [stack (:stacks (cf/describe-stacks creds))]
         (cf/delete-stack creds stack)))))
 
+(defn normalize-config [config]
+  (merge config
+    {
+     :copy-to (let [copy-to (:copy-to config)]
+                (cond
+                  (seq? copy-to) copy-to
+                  (= "all" copy-to) (all-regions-except (:build-region config))
+                  :else [copy-to]))
+     }))
+
 (defn -main [& args]
   (let [action (first args)
         options (drop 1 (drop-last 1 args))
@@ -306,9 +330,9 @@
         env {:git-rev (git-rev)
              :timestamp (timestamp)
              :clean-timestamp (str/replace (timestamp) #":" ".")}
-        config (parse-string (render config-template env) true)]
+        config (normalize-config (parse-string (render config-template env) true))]
     (case action
-      "build" (run-build config)
+      "build" (run-build options config)
       "tag" (run-tag options config)
       "latest" (run-latest options config)
       "clear-amis" (run-clear-amis options config)
