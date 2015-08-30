@@ -41,15 +41,18 @@
 (defn do-with-ssh [keypair username public-ip & fns]
   (let [agent (ssh-agent {})]
     (add-identity agent {:private-key (:key-material keypair)})
-    (let [session (session agent public-ip {:username username
-                                            :strict-host-key-checking :no})]
+    (let [sesh (atom nil)]
       (loop [connect-failed (atom false)]
         (try
-          (connect session 60000)
-          (catch Exception ex (log/info "connect attempt failed, will retry" ex) (Thread/sleep 5000) (reset! connect-failed true)))
+          (reset! sesh (session agent public-ip {:username username :strict-host-key-checking :no}))
+          (connect @sesh 15000)
+          (catch Exception ex
+            (log/info "connect attempt failed, will retry" ex)
+            (Thread/sleep 5000)
+            (reset! connect-failed true)))
         (if @connect-failed (recur (atom false))))
-      (with-connection session
-                       (doseq [fn fns] (fn session))))))
+      (with-connection @sesh
+                       (doseq [fn fns] (fn @sesh))))))
 
 (defn run-instructions [instructions]
   (fn [session]
@@ -148,10 +151,11 @@
         keypair-name (str "keypair-" id)
         {keypair :key-pair} (create-key-pair creds {:key-name keypair-name})
         {sg-id :group-id} (create-security-group creds {:group-name (str "mami-sg-" id) :description "mami temporary sg"})]
-    (log/info "launching with key:" (:key-material keypair))
+    (log/info "launching with key:\n" (:key-material keypair))
     (authorize-security-group-ingress creds {:group-id sg-id :cidr-ip "0.0.0.0/0" :from-port 22 :to-port 22 :ip-protocol "tcp"})
     (let [{{[{instance-id :instance-id}] :instances} :reservation} (run-instances creds {:security-group-ids [sg-id]
                                                            :image-id (:source-ami config)
+                                                           :iam-instance-profile {:arn "arn:aws:iam::933693344490:instance-profile/BastionRole"}
                                                            :min-count 1
                                                            :max-count 1
                                                            :instance-type (:instance-type config)
