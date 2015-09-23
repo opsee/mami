@@ -231,6 +231,10 @@
 (def build-options
   (concat common-options
     [[nil "--no-cleanup" "Disable cleanup (default false)"
+      :default false]
+     [nil "--bastion-version TAG" "Test against a particular tag of the bastion container image"
+      :default "latest"]
+     ["-b" "--build-ami" "Build an AMI instead from the created instance"
       :default false]]))
 
 (defn run-build [args config]
@@ -247,6 +251,22 @@
         staging-dir (:staging config)]
     (try
       (create-staging-dir keypair username public-ip staging-dir)
+      ; I don't really know of a way to do this that isn't quite so opaque to the mami user,
+      ; but I don't really see the value in making this super flexible right now. -G
+      (let [customer-id (System/getenv "CUSTOMER_ID")
+            bastion-id (System/getenv "BASTION_ID")
+            vpn-password (System/getenv "VPN_PASSWORD")
+            bastion-version (:bastion-version config)
+            env-contents (str
+                           "CUSTOMER_ID=" customer-id "\n"
+                           "BASTION_ID=" bastion-id "\n"
+                           "VPN_PASSWORD=" vpn-password "\n"
+                           "BASTION_VERSION=" bastion-version "\n")]
+        (spit "bastion-env.sh" env-contents)
+        (scp keypair username public-ip staging-dir {:from "bastion-env.sh"})
+        (shell keypair username public-ip nil {:instructions [
+                                                              "sudo mkdir /etc/opsee"
+                                                              (str "sudo mv " staging-dir "/bastion-env.sh /etc/opsee/bastion-env.sh")]}))
       (doseq [step preparation-steps
               :let [type (:type step)]]
         ((eval (symbol "mami.core" type)) keypair username public-ip staging-dir step))
@@ -255,9 +275,10 @@
         (reboot-and-wait creds instance-details))
       (stop-instances creds {:instance-ids [instance-id]})
       (wait-for-state creds "stopped" instance-id)
-      (let [image-id  (make-ebs-image creds instance-details config)
-            image-ids (copy-to (:build-region config) image-id config)]
-        (doseq [[] (seq image-ids)]))
+      (if (:build-ami config)
+        (let [image-id (make-ebs-image creds instance-details config)
+              image-ids (copy-to (:build-region config) image-id config)]
+          (doseq [[] (seq image-ids)])))
       (catch Exception ex
         (log/error ex "Got exception during build")
         (reset! error true)))
