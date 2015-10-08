@@ -15,7 +15,7 @@
                  [amazonica "0.3.21"]
                  [cheshire "5.4.0"]
                  [clj-time "0.9.0"]
-                 [clj-ssh "0.5.12-SNAPSHOT"]
+                 [clj-ssh "0.5.11"]
                  [org.slf4j/slf4j-log4j12 "1.7.7"]
                  [log4j/log4j "1.2.17" :exclusions [javax.mail/mail
                                                     javax.jms/jms

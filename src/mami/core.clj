@@ -95,15 +95,23 @@
     (do-with-ssh keypair username public-ip
                  (run-instructions instructions))))
 
+(defn systemd-unit-type [unit-name]
+  (last (.split unit-name "\\.")))
+
+(defn systemd-instructions [unit-type unit-name staging]
+    (let [instructions [(str "sudo mv " staging "/" unit-name " /etc/systemd/system/")]]
+      (if (= unit-type "service")
+            (into [] (concat instructions [(str "sudo systemctl enable /etc/systemd/system/" unit-name)
+                                             (str "sudo systemctl start " unit-name)
+                                             (str "sudo systemctl status " unit-name)])) instructions)))
+
 (defn systemd [keypair username public-ip staging systemd-config]
   (let [unit-file (:unit-file systemd-config)
-        unit-name (.getName (File. unit-file))]
+        unit-name (.getName (File. unit-file))
+        unit-type (systemd-unit-type unit-name)]
     (do-with-ssh keypair username public-ip
                  (upload-paths unit-file staging)
-                 (run-instructions [(str "sudo mv " staging "/" unit-name " /etc/systemd/system/")
-                                    (str "sudo systemctl enable /etc/systemd/system/" unit-name)
-                                    (str "sudo systemctl start " unit-name)
-                                    (str "sudo systemctl status " unit-name)]))))
+                 (run-instructions (systemd-instructions unit-type unit-name staging)))))
 
 (defn waitfor [keypair username public-ip _ waitfor-config]
   (let [test-script (:test waitfor-config)]
