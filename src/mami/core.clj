@@ -52,7 +52,7 @@
             (reset! connect-failed true)))
         (if @connect-failed (recur (atom false))))
       (with-connection @sesh
-                       (doseq [fn fns] (fn @sesh))))))
+        (doseq [fn fns] (fn @sesh))))))
 
 (defn run-instructions [instructions]
   (fn [session]
@@ -79,31 +79,33 @@
   (delete-security-group creds {:group-id (:sg-id instance-details)}))
 
 (defn print-debug [creds keypair username public-ip]
-  (let [key (:key-material keypair)
-        filename (str public-ip ".pem")]
-    (spit filename key)
-    (Files/setPosixFilePermissions
-      (.getPath (FileSystems/getDefault) "." (into-array String [filename]))
-      #{PosixFilePermission/OWNER_READ PosixFilePermission/OWNER_WRITE})
-    (log/info "Build failed, instance preserved for debug. To login run:")
-    (log/info (str "ssh -i " filename " " username "@" public-ip))))
+                   (let [key (:key-material keypair)
+                         filename (str public-ip ".pem")]
+                     (spit filename key)
+                     (Files/setPosixFilePermissions
+                      (.getPath (FileSystems/getDefault) "." (into-array String [filename]))
+                      #{PosixFilePermission/OWNER_READ PosixFilePermission/OWNER_WRITE})
+                     (log/info "Build failed, instance preserved for debug. To login run:")
+                     (log/info (str "ssh -i " filename " " username "@" public-ip))))
 
 ;;;; these get invoked by the corresponding "type" in the prepare steps
 
-(defn shell [keypair username public-ip _ shell-config]
-  (let [instructions (:instructions shell-config)]
-    (do-with-ssh keypair username public-ip
-                 (run-instructions instructions))))
+  (defn shell [keypair username public-ip _ shell-config]
+    (let [instructions (:instructions shell-config)]
+      (do-with-ssh keypair username public-ip
+                   (run-instructions instructions))))
 
-(defn systemd-unit-type [unit-name]
-  (last (.split unit-name "\\.")))
+  (defn systemd-unit-type [unit-name]
+    (last (.split unit-name "\\.")))
 
-(defn systemd-instructions [unit-type unit-name staging]
+  (defn systemd-instructions [unit-type unit-name staging]
     (let [instructions [(str "sudo mv " staging "/" unit-name " /etc/systemd/system/")]]
-      (if (= unit-type "service")
-            (into [] (concat instructions [(str "sudo systemctl enable /etc/systemd/system/" unit-name)
-                                             (str "sudo systemctl start " unit-name)
-                                             (str "sudo systemctl status " unit-name)])) instructions)))
+      (case unit-type
+        "service" (into [] (concat instructions [(str "sudo systemctl enable /etc/systemd/system/" unit-name)
+                                                 (str "sudo systemctl start " unit-name)
+                                                 (str "sudo systemctl status " unit-name)]))
+        "timer" (into [] (concat instructions [(str "sudo systemctl enable /etc/systemd/system/" unit-name)
+                                               (str "sudo systemctl start " unit-name)]))instructions)))
 
 (defn systemd [keypair username public-ip staging systemd-config]
   (let [unit-file (:unit-file systemd-config)
@@ -116,15 +118,15 @@
 (defn waitfor [keypair username public-ip _ waitfor-config]
   (let [test-script (:test waitfor-config)]
     (do-with-ssh keypair username public-ip
-      (fn [session]
-        (loop [count 0]
-          (if (> count 30)
-            (throw (Exception. "Waitfor timed out."))
-            (let [output (ssh session {:in (str "test " test-script)})]
-              (println (str/replace (:out output) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
-              (when-not (= 0 (:exit output))
-                (Thread/sleep 2000)
-                (recur (inc count))))))))))
+                 (fn [session]
+                   (loop [count 0]
+                     (if (> count 30)
+                       (throw (Exception. "Waitfor timed out."))
+                       (let [output (ssh session {:in (str "test " test-script)})]
+                         (println (str/replace (:out output) #"([\s]?[\r]|[\x1B]\[(H|J))" ""))
+                         (when-not (= 0 (:exit output))
+                           (Thread/sleep 2000)
+                           (recur (inc count))))))))))
 
 (defn chef-solo [keypair username public-ip staging chef-config]
   (let [cookbook_paths (:cookbook_paths chef-config)
@@ -162,12 +164,12 @@
     (log/info "launching with key:\n" (:key-material keypair))
     (authorize-security-group-ingress creds {:group-id sg-id :cidr-ip "0.0.0.0/0" :from-port 22 :to-port 22 :ip-protocol "tcp"})
     (let [{{[{instance-id :instance-id}] :instances} :reservation} (run-instances creds {:security-group-ids [sg-id]
-                                                           :image-id (:source-ami config)
-                                                           :iam-instance-profile {:arn "arn:aws:iam::933693344490:instance-profile/BastionRole"}
-                                                           :min-count 1
-                                                           :max-count 1
-                                                           :instance-type (:instance-type config)
-                                                           :key-name keypair-name})
+                                                                                         :image-id (:source-ami config)
+                                                                                         :iam-instance-profile {:arn "arn:aws:iam::933693344490:instance-profile/BastionRole"}
+                                                                                         :min-count 1
+                                                                                         :max-count 1
+                                                                                         :instance-type (:instance-type config)
+                                                                                         :key-name keypair-name})
           public-ip (do
                       ;; Race condition between run-instances and describe-instances in wait-for-state
                       ;; So just sleep for a second before we try to wait-for-state. Should cut down
@@ -188,9 +190,9 @@
     (wait-for-state creds "running" instance-id)))
 
 (defn tag-image [creds image-id tags]
-    (log/info "tagging image" image-id "with" tags)
-    (create-tags creds {:resources [image-id]
-                        :tags      tags}))
+  (log/info "tagging image" image-id "with" tags)
+  (create-tags creds {:resources [image-id]
+                      :tags      tags}))
 
 (defn make-ebs-image [creds instance-details config]
   (let [{image-id :image-id} (create-image creds {:instance-id (:instance-id instance-details)
@@ -204,27 +206,27 @@
   (let [to-regions (:copy-to config)]
     (apply hash-map
            (flatten
-             (for [to-region to-regions
-                   :let [ep {:endpoint (name to-region)}]]
+            (for [to-region to-regions
+                  :let [ep {:endpoint (name to-region)}]]
 
-                 (let [{dst-image-id :image-id} (copy-image ep {:name (:ami-name config)
-                                                                :description (:ami-description config)
-                                                                :source-image-id image-id
-                                                                :source-region from-region})
-                       tags (concat (:ami-tags config)
-                              [["sha" (git-rev)]
-                               ["release" (:release config)]])]
-                   (log/info "copied to" to-region "with id" dst-image-id)
-                   (tag-image ep dst-image-id tags)
-                   [to-region dst-image-id]))))))
+              (let [{dst-image-id :image-id} (copy-image ep {:name (:ami-name config)
+                                                             :description (:ami-description config)
+                                                             :source-image-id image-id
+                                                             :source-region from-region})
+                    tags (concat (:ami-tags config)
+                                 [["sha" (git-rev)]
+                                  ["release" (:release config)]])]
+                (log/info "copied to" to-region "with id" dst-image-id)
+                (tag-image ep dst-image-id tags)
+                [to-region dst-image-id]))))))
 
 (defn parse-tags [arg]
   (map
-    (fn [tagsec]
-      (let [[name vals] (str/split tagsec #"\s*=\s*")]
-        {:name (str "tag:" name)
-         :values (when vals (str/split vals #"\s*,\s*"))}))
-    (str/split arg #"\s*;\s*")))
+   (fn [tagsec]
+     (let [[name vals] (str/split tagsec #"\s*=\s*")]
+       {:name (str "tag:" name)
+        :values (when vals (str/split vals #"\s*,\s*"))}))
+   (str/split arg #"\s*;\s*")))
 
 (def common-options
   [["-g" "--regions REGIONS" "a comma separated list of regions to do the upload (defaults to all)"
@@ -238,12 +240,12 @@
 
 (def build-options
   (concat common-options
-    [[nil "--no-cleanup" "Disable cleanup (default false)"
-      :default false]
-     [nil "--bastion-version TAG" "Test against a particular tag of the bastion container image"
-      :default "latest"]
-     ["-b" "--build-ami" "Build an AMI instead from the created instance"
-      :default false]]))
+          [[nil "--no-cleanup" "Disable cleanup (default false)"
+            :default false]
+           [nil "--bastion-version TAG" "Test against a particular tag of the bastion container image"
+            :default "latest"]
+           ["-b" "--build-ami" "Build an AMI instead from the created instance"
+            :default false]]))
 
 (defn run-build [args config]
   (let [{:keys [options _ _ _]} (cli/parse-opts args build-options)
@@ -259,17 +261,17 @@
         staging-dir (:staging config)]
     (try
       (create-staging-dir keypair username public-ip staging-dir)
-      ; I don't really know of a way to do this that isn't quite so opaque to the mami user,
-      ; but I don't really see the value in making this super flexible right now. -G
+                                        ; I don't really know of a way to do this that isn't quite so opaque to the mami user,
+                                        ; but I don't really see the value in making this super flexible right now. -G
       (let [customer-id (System/getenv "CUSTOMER_ID")
             bastion-id (System/getenv "BASTION_ID")
             vpn-password (System/getenv "VPN_PASSWORD")
             bastion-version (:bastion-version config)
             env-contents (str
-                           "CUSTOMER_ID=" customer-id "\n"
-                           "BASTION_ID=" bastion-id "\n"
-                           "VPN_PASSWORD=" vpn-password "\n"
-                           "BASTION_VERSION=" bastion-version "\n")]
+                          "CUSTOMER_ID=" customer-id "\n"
+                          "BASTION_ID=" bastion-id "\n"
+                          "VPN_PASSWORD=" vpn-password "\n"
+                          "BASTION_VERSION=" bastion-version "\n")]
         (spit "bastion-env.sh" env-contents)
         (scp keypair username public-ip staging-dir {:from "bastion-env.sh"})
         (shell keypair username public-ip nil {:instructions [
@@ -307,14 +309,14 @@
 
 (def tag-options
   (concat common-options
-    [["-s" "--sha" "sha tag of the image to set the release tag (default: current git revhash"
-      :default nil]]))
+          [["-s" "--sha" "sha tag of the image to set the release tag (default: current git revhash"
+            :default nil]]))
 
 (defn run-tag [args config])
 
 (def latest-options
   (concat common-options
-     [["-o" "--owner OWNER" "the owning acct id for the AMIs" :default "933693344490"]]))
+          [["-o" "--owner OWNER" "the owning acct id for the AMIs" :default "933693344490"]]))
 
 (defn run-latest [args config]
   (let [{:keys [options arguments errors summary]} (cli/parse-opts args latest-options)
@@ -328,12 +330,12 @@
             :let [creds {:endpoint (name region)}
                   {images :images} (describe-images creds :owners [(:owner options)] :filters filters)
                   image (first
-                          (sort-by :name #(compare %2 %1) images))]]
+                         (sort-by :name #(compare %2 %1) images))]]
       (pprint {region image}))))
 
 (def clear-options
   (concat common-options
-    [[]]))
+          [[]]))
 
 (defn run-clear-amis [args config]
   )
@@ -347,13 +349,13 @@
 
 (defn normalize-config [config]
   (merge config
-    {
-     :copy-to (let [copy-to (:copy-to config)]
-                (cond
-                  (seq? copy-to) copy-to
-                  (= "all" copy-to) (all-regions-except (:build-region config))
-                  :else [copy-to]))
-     }))
+         {
+          :copy-to (let [copy-to (:copy-to config)]
+                     (cond
+                       (seq? copy-to) copy-to
+                       (= "all" copy-to) (all-regions-except (:build-region config))
+                       :else [copy-to]))
+          }))
 
 (defn -main [& args]
   (let [action (first args)
