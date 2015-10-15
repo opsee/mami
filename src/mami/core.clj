@@ -256,12 +256,15 @@
       (let [customer-id (System/getenv "CUSTOMER_ID")
             bastion-id (System/getenv "BASTION_ID")
             vpn-password (System/getenv "VPN_PASSWORD")
+            bastion-ingress (System/getenv "ENABLE_BASTION_INGRESS")
             bastion-version (:bastion-version config)
             env-contents (str
                            "CUSTOMER_ID=" customer-id "\n"
                            "BASTION_ID=" bastion-id "\n"
                            "VPN_PASSWORD=" vpn-password "\n"
-                           "BASTION_VERSION=" bastion-version "\n")]
+                           "BASTION_VERSION=" bastion-version "\n"
+                           "ENABLE_BASTION_INGRESS=" bastion-ingress "\n"
+                           )]
         (spit "bastion-env.sh" env-contents)
         (scp keypair username public-ip staging-dir {:from "bastion-env.sh"})
         (shell keypair username public-ip nil {:instructions [
