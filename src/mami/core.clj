@@ -10,6 +10,7 @@
             [clj-time.format :as f]
             [clojure.tools.cli :as cli]
             [clj-ssh.ssh :refer :all]
+            [clj-http.client :as client]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [clojure.pprint :refer [pprint]]
@@ -151,8 +152,27 @@
   (do-with-ssh keypair username public-ip
                (run-instructions [(str "rm -rf " staging)])))
 
-;;; instance launching
 
+(defn get-latest-coreos-ami-all
+  "returns a map of the latest coreos amis for all regions"
+ ([url]
+    (try
+      (parse-string ((client/get url {:throw-exceptions true}) :body))
+    (catch Exception e (log/error (str "caught: Error retrieving most recent COREOS AMI -- " (.getMessage e)))))))
+
+(defn get-latest-coreos-ami
+  "returns the ami-image id for the most recent coreos-ami for a given region and type"
+  ([region type]
+   (((get-latest-coreos-ami-all "https://coreos.com/dist/aws/aws-stable.json") region) type)))
+
+(defn get-build-ami
+  "returns the id of the ami from either the most recent or from config file if source-ami is specified"
+  ([region type config]
+   (if (contains? config :source-ami) (config :source-ami) (get-latest-coreos-ami region type))))
+
+
+;;; instance launching
+;;; XXX Modify this for newest AMI
 (defn launch-instance [creds config]
   (log/info "launching ec2 instance")
   (let [id (identifiers/generate)
@@ -162,7 +182,7 @@
     (log/info "launching with key:\n" (:key-material keypair))
     (authorize-security-group-ingress creds {:group-id sg-id :cidr-ip "0.0.0.0/0" :from-port 22 :to-port 22 :ip-protocol "tcp"})
     (let [{{[{instance-id :instance-id}] :instances} :reservation} (run-instances creds {:security-group-ids [sg-id]
-                                                           :image-id (:source-ami config)
+                                                           :image-id (get-build-ami (config :build-region) "hvm" config)
                                                            :iam-instance-profile {:arn "arn:aws:iam::933693344490:instance-profile/BastionRole"}
                                                            :min-count 1
                                                            :max-count 1
