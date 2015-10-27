@@ -216,8 +216,13 @@
   (let [{image-id :image-id} (create-image creds {:instance-id (:instance-id instance-details)
                                                   :name (:ami-name config)
                                                   :description (:ami-description config)
-                                                  :no-reboot true})]
+                                                  :no-reboot true})
+        tags (concat (:ami-tags config)
+                              [["sha" (git-rev)]
+                               ["release" (:release config)]])]
+
     (log/info "create image id" image-id)
+    (tag-image creds image-id tags)
     image-id))
 
 (defn copy-to [from-region image-id config]
