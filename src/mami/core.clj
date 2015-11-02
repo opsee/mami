@@ -297,7 +297,7 @@
 
             env-contents (if (:bastion-env config)
                            ;; XXX this is dangerous, quick, and highly configurable. (dan)
-                           (read-eval (:bastion-env config))
+                           (*read-eval* (:bastion-env config))
                            (str
                            "CUSTOMER_ID=" customer-id "\n"
                            "BASTION_ID=" bastion-id "\n"
