@@ -294,7 +294,11 @@
             nsqd-host (System/getenv "NSQD_HOST")
             bastion-ingress (System/getenv "ENABLE_BASTION_INGRESS")
             bastion-version (:bastion-version config)
-            env-contents (str
+
+            env-contents (if (:bastion-env config)
+                           ;; XXX this is dangerous, quick, and highly configurable. (dan)
+                           (*read-eval* (:bastion-env config))
+                           (str
                            "CUSTOMER_ID=" customer-id "\n"
                            "BASTION_ID=" bastion-id "\n"
                            "VPN_PASSWORD=" vpn-password "\n"
@@ -303,7 +307,7 @@
                            "DNS_SERVER=" dns-server "\n"
                            "NSQD_HOST=" nsqd-host "\n"
                            "ENABLE_BASTION_INGRESS=" bastion-ingress "\n"
-                           )]
+                           ))]
         (spit "bastion-env.sh" env-contents)
         (scp keypair username public-ip staging-dir {:from "bastion-env.sh"})
         (shell keypair username public-ip nil {:instructions [
