@@ -289,6 +289,9 @@
       (let [customer-id (System/getenv "CUSTOMER_ID")
             bastion-id (System/getenv "BASTION_ID")
             vpn-password (System/getenv "VPN_PASSWORD")
+            vpn-remote (System/getenv "VPN_REMOTE")
+            dns-server (System/getenv "DNS_SERVER")
+            nsqd-host (System/getenv "NSQD_HOST")
             bastion-ingress (System/getenv "ENABLE_BASTION_INGRESS")
             bastion-version (:bastion-version config)
             env-contents (str
@@ -296,6 +299,9 @@
                            "BASTION_ID=" bastion-id "\n"
                            "VPN_PASSWORD=" vpn-password "\n"
                            "BASTION_VERSION=" bastion-version "\n"
+                           "VPN_REMOTE=" vpn-remote "\n"
+                           "DNS_SERVER=" dns-server "\n"
+                           "NSQD_HOST=" nsqd-host "\n"
                            "ENABLE_BASTION_INGRESS=" bastion-ingress "\n"
                            )]
         (spit "bastion-env.sh" env-contents)
