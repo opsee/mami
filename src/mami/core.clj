@@ -292,6 +292,9 @@
             vpn-remote (System/getenv "VPN_REMOTE")
             dns-server (System/getenv "DNS_SERVER")
             nsqd-host (System/getenv "NSQD_HOST")
+            customer-email (System/getenv "CUSTOMER_EMAIL")
+            bartnet-endpoint (System/getenv "BARTNET_ENDPOINT")
+            bastion-auth-type (System/getenv "BASTION_AUTH_TYPE")
             bastion-ingress (System/getenv "ENABLE_BASTION_INGRESS")
             bastion-version (:bastion-version config)
             env-contents (str
@@ -302,6 +305,9 @@
                            "VPN_REMOTE=" vpn-remote "\n"
                            "DNS_SERVER=" dns-server "\n"
                            "NSQD_HOST=" nsqd-host "\n"
+                           "BARTNET_ENDPOINT=" bartnet-endpoint "\n"
+                           "BASTION_AUTH_TYPE=" bastion-auth-type "\n"
+                           "CUSTOMER_EMAIL=" customer-email "\n"
                            "ENABLE_BASTION_INGRESS=" bastion-ingress "\n"
                            )]
         (spit "bastion-env.sh" env-contents)
