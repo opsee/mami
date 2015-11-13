@@ -32,12 +32,21 @@
     (:public-ip-address instance)))
 
 (defn wait-for-state [creds state instance-id]
+  (log/info "Waiting for instance to enter state " state)
   (loop [{[{[{status :state}] :instances}] :reservations} (describe-instances creds {:instance-ids [instance-id]})]
-    (log/info "instance status" status)
     (if-not (= state (:name status))
       (do
         (Thread/sleep 1000)
         (recur (describe-instances creds {:instance-ids [instance-id]}))))))
+
+(defn wait-for-ami-state [creds state image-id]
+  (log/info "waiting for image to be available...")
+  (log/info (describe-images creds {:image-ids [image-id]}))
+  (loop [{[{status :state}] :images} (describe-images creds {:image-ids [image-id]})]
+    (if-not (= state status)
+      (do
+        (Thread/sleep 1000)
+        (recur (describe-images creds {:image-ids [image-id]}))))))
 
 (defn do-with-ssh [keypair username public-ip & fns]
   (let [agent (ssh-agent {})]
@@ -223,6 +232,10 @@
 
     (log/info "create image id" image-id)
     (tag-image creds image-id tags)
+    (when (:public config)
+      (log/info "Marking AMI as public: " image-id)
+      (wait-for-ami-state creds "available" image-id)
+      (modify-image-attribute creds {:image-id image-id :launch-permission {:add [{:group "all"}]}}))
     image-id))
 
 (defn copy-to [from-region image-id config]
