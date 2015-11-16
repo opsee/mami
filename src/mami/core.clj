@@ -257,7 +257,7 @@
                    (when (:public config)
                      (log/info "Marking AMI as public: " dst-image-id)
                      (wait-for-ami-state creds "available" dst-image-id)
-                     (modify-image-attribute creds {:image-id dst-image-id :launch-permission {:add [{:group "all"}]}}))
+                     (modify-image-attribute (assoc creds :endpoint ep) {:image-id dst-image-id :launch-permission {:add [{:group "all"}]}}))
                    [to-region dst-image-id]))))))
 
 (defn parse-tags [arg]
