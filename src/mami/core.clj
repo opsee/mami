@@ -238,7 +238,7 @@
       (modify-image-attribute creds {:image-id image-id :launch-permission {:add [{:group "all"}]}}))
     image-id))
 
-(defn copy-to [from-region image-id config]
+(defn copy-to [creds from-region image-id config]
   (let [to-regions (:copy-to config)]
     (apply hash-map
            (flatten
@@ -254,6 +254,10 @@
                                ["release" (:release config)]])]
                    (log/info "copied to" to-region "with id" dst-image-id)
                    (tag-image ep dst-image-id tags)
+                   (when (:public config)
+                     (log/info "Marking AMI as public: " dst-image-id)
+                     (wait-for-ami-state creds "available" dst-image-id)
+                     (modify-image-attribute creds {:image-id dst-image-id :launch-permission {:add [{:group "all"}]}}))
                    [to-region dst-image-id]))))))
 
 (defn parse-tags [arg]
@@ -338,7 +342,7 @@
       (wait-for-state creds "stopped" instance-id)
       (if (:build-ami config)
         (let [image-id (make-ebs-image creds instance-details config)
-              image-ids (copy-to (:build-region config) image-id config)]
+              image-ids (copy-to creds (:build-region config) image-id config)]
           (doseq [[] (seq image-ids)])))
       (catch Exception ex
         (log/error ex "Got exception during build")
