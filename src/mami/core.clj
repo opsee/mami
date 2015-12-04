@@ -402,6 +402,7 @@
         config-template (slurp config-file)
         env {:git-rev (git-rev)
              :timestamp (timestamp)
+             :ci (some? (System/getenv "CI"))
              :clean-timestamp (str/replace (timestamp) #":" ".")}
         config (normalize-config (parse-string (render config-template env) true))]
     (case action
