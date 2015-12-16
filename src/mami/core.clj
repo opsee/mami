@@ -309,6 +309,7 @@
                            "BASTION_AUTH_TYPE=" bastion-auth-type "\n"
                            "CUSTOMER_EMAIL=" customer-email "\n"
                            "ENABLE_BASTION_INGRESS=" bastion-ingress "\n"
+                           "GODEBUG=netdns=cgo" "\n"
                            )]
         (spit "bastion-env.sh" env-contents)
         (scp keypair username public-ip staging-dir {:from "bastion-env.sh"})
