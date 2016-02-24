@@ -176,13 +176,14 @@
 (defn launch-instance [creds config]
   (log/info "launching ec2 instance")
   (let [id (identifiers/generate)
+        image-id (get-build-ami (config :build-region) "hvm" config)
         keypair-name (str "keypair-" id)
         {keypair :key-pair} (create-key-pair creds {:key-name keypair-name})
         {sg-id :group-id} (create-security-group creds {:group-name (str "mami-sg-" id) :description "mami temporary sg"})]
     (log/info "launching with key:\n" (:key-material keypair))
     (authorize-security-group-ingress creds {:group-id sg-id :cidr-ip "0.0.0.0/0" :from-port 22 :to-port 22 :ip-protocol "tcp"})
     (let [{{[{instance-id :instance-id}] :instances} :reservation} (run-instances creds {:security-group-ids [sg-id]
-                                                           :image-id (get-build-ami (config :build-region) "hvm" config)
+                                                           :image-id image-id
                                                            :iam-instance-profile {:arn "arn:aws:iam::933693344490:instance-profile/BastionRole"}
                                                            :min-count 1
                                                            :max-count 1
@@ -195,6 +196,7 @@
                       (Thread/sleep 1000)
                       (wait-for-state creds "running" instance-id)
                       (get-public-ip creds instance-id))]
+      (log/info "source ami: " image-id)
       (log/info "instance" instance-id "successfully launched reachable at" public-ip)
       {:key-pair keypair
        :instance-id instance-id
