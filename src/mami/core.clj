@@ -163,7 +163,7 @@
 (defn get-latest-coreos-ami
   "returns the ami-image id for the most recent coreos-ami for a given region and type"
   ([region type]
-   (((get-latest-coreos-ami-all "https://coreos.com/dist/aws/aws-stable.json") region) type)))
+   (((get-latest-coreos-ami-all "https://coreos.com/dist/aws/aws-beta.json") region) type)))
 
 (defn get-build-ami
   "returns the id of the ami from either the most recent or from config file if source-ami is specified"
