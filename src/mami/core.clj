@@ -218,7 +218,7 @@
   (let [{image-id :image-id} (create-image creds {:instance-id (:instance-id instance-details)
                                                   :name (:ami-name config)
                                                   :description (:ami-description config)
-                                                  :no-reboot true})
+                                                  :no-reboot false})
         tags (concat (:ami-tags config)
                               [["sha" (git-rev)]
                                ["release" (:release config)]])]
